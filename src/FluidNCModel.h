@@ -69,11 +69,17 @@ char        axisNumToChar(int axis);
 state_t     decode_state_string(const char* state_string);
 const char* decode_error_number(int error_num);
 const char* mode_string();
+bool        alarm_is_homing();
+bool        alarm_is_critical();
 
 bool fnc_is_connected();
 void set_disconnected_state();
 
 void update_rx_time();
+
+// Observe raw FluidNC receive bytes so probe reports can be delivered despite
+// the pinned GrblParser release expecting the wrong separator in [PRB:] lines.
+int observe_fnc_rx(int ch);
 
 // Bounded boot-time probe over UART: discards bootloader noise then sends
 // XON + status-report queries until FluidNC responds, or `budget_ms`

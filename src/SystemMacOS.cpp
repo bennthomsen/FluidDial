@@ -7,6 +7,9 @@
 
 #include "System.h"
 #include "FluidNCModel.h"
+#ifdef DEV_SIMULATED_CONNECT
+#    include "ConfigItem.h"
+#endif
 #include "M5GFX.h"
 #include "Drawing.h"
 #include "NVS.h"
@@ -37,6 +40,53 @@ void system_background() {
 void update_events() {
     lgfx::Panel_sdl::loop();
     M5.update();
+
+#ifdef DEV_SIMULATED_CONNECT
+    // Keep scene previews alive without a serial-connected FluidNC instance.
+    update_rx_time();
+
+    static bool simulated_status_sent = false;
+    if (!simulated_status_sent) {
+        simulated_status_sent = true;
+
+        begin_status_report();
+        show_state("Idle");
+
+        pos_t fake_axes[6] = {
+            -200000, 40000, 330000, 450000, -300000, 900000,
+        };
+        pos_t fake_wco[6] = { 0, 0, 0, 0, 0, 0 };
+        bool fake_limits[6] = { true, false, false, true, true, false };
+
+        show_dro(fake_axes, fake_wco, false, fake_limits, 6);
+        show_limits(false, fake_limits, 6);
+        end_status_report();
+    }
+
+    // detect_homing_info() is deferred until after the first simulated status
+    // report. Answer its queued config requests on the following update.
+    static bool simulated_homing_info_sent = false;
+    if (!simulated_homing_info_sent && !configRequests.empty()) {
+        static const char* replies[] = {
+            "$/axes/x/homing/cycle=1",
+            "$/axes/x/homing/allow_single_axis=true",
+            "$/axes/y/homing/cycle=1",
+            "$/axes/y/homing/allow_single_axis=true",
+            "$/axes/z/homing/cycle=1",
+            "$/axes/z/homing/allow_single_axis=true",
+            "$/axes/a/homing/cycle=1",
+            "$/axes/a/homing/allow_single_axis=true",
+            "$/axes/b/homing/cycle=1",
+            "$/axes/b/homing/allow_single_axis=true",
+            "$/axes/c/homing/cycle=1",
+            "$/axes/c/homing/allow_single_axis=true",
+        };
+        for (const char* reply : replies) {
+            parse_dollar(reply);
+        }
+        simulated_homing_info_sent = true;
+    }
+#endif
 }
 
 extern "C" int milliseconds() {
@@ -131,7 +181,7 @@ extern "C" int fnc_getchar() {
     int  cnt = (int)read(serial_fd, &c, 1);
     if (cnt > 0) {
         update_rx_time();
-        return (unsigned char)c;
+        return observe_fnc_rx((unsigned char)c);
     }
     return -1;
 }

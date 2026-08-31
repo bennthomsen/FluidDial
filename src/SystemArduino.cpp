@@ -69,9 +69,15 @@ extern "C" void fnc_putchar(uint8_t c) {
     ws_putchar(c);
 }
 extern "C" int fnc_getchar() {
-    if (wifi_use_uart_mode())   return uart_getchar_impl();
-    if (wifi_use_espnow_mode()) return espnow_getchar();
-    return ws_getchar();
+    int ch;
+    if (wifi_use_uart_mode()) {
+        ch = uart_getchar_impl();
+    } else if (wifi_use_espnow_mode()) {
+        ch = espnow_getchar();
+    } else {
+        ch = ws_getchar();
+    }
+    return observe_fnc_rx(ch);
 }
 // Whether another received byte is already buffered for the active transport
 extern "C" bool fnc_rx_waiting() {
@@ -83,7 +89,7 @@ extern "C" bool fnc_rx_waiting() {
 // ── UART-only build ───────────────────────────────────────────────────────────
 extern "C" void fnc_putchar(uint8_t c) { uart_putchar_impl(c); }
 extern "C" bool fnc_rx_waiting()        { return uart_rx_waiting(); }
-extern "C" int  fnc_getchar()          { return uart_getchar_impl(); }
+extern "C" int  fnc_getchar()          { return observe_fnc_rx(uart_getchar_impl()); }
 #endif
 
 // poll_extra: called by fnc_poll() inside fnc_send_line()'s blocking wait loop.

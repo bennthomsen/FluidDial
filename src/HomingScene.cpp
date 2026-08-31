@@ -3,22 +3,34 @@
 
 #include "Scene.h"
 #include "ConfigItem.h"
+#include "ConfirmScene.h"
 
 extern Scene statusScene;
 
-#define HOMING_N_AXIS 4
+#define HOMING_N_AXIS 6
+
+static int homing_axis_count() {
+    if (n_axes <= 0) {
+        return 3;
+    }
+    return n_axes < HOMING_N_AXIS ? n_axes : HOMING_N_AXIS;
+}
 
 IntConfigItem homing_cycles[HOMING_N_AXIS] = {
     { "$/axes/x/homing/cycle" },
     { "$/axes/y/homing/cycle" },
     { "$/axes/z/homing/cycle" },
     { "$/axes/a/homing/cycle" },
+    { "$/axes/b/homing/cycle" },
+    { "$/axes/c/homing/cycle" },
 };
 BoolConfigItem homing_allows[HOMING_N_AXIS] = {
     { "$/axes/x/homing/allow_single_axis" },
     { "$/axes/y/homing/allow_single_axis" },
     { "$/axes/z/homing/allow_single_axis" },
     { "$/axes/a/homing/allow_single_axis" },
+    { "$/axes/b/homing/allow_single_axis" },
+    { "$/axes/c/homing/allow_single_axis" },
 };
 
 int  homed_axes = 0;
@@ -32,22 +44,31 @@ void set_axis_homed(int axis) {
 
 void detect_homing_info() {
     clear_config_requests();
-    for (int i = 0; i < HOMING_N_AXIS; i++) {
+    for (int i = 0; i < homing_axis_count(); i++) {
         homing_cycles[i].init();
         homing_allows[i].init();
     }
     homed_axes = 0;
 }
-bool can_home(int i) {
-    if (!homing_cycles[i].known() || !homing_allows[i].known()) {
-        return false;
+bool homes_in_all(int axis) {
+    return homing_cycles[axis].known() && homing_cycles[axis].get() != 0;
+}
+
+bool can_home_individually(int axis) {
+    return homing_allows[axis].known() && homing_allows[axis].get();
+}
+
+bool has_home_all_axes() {
+    for (int axis = 0; axis < homing_axis_count(); ++axis) {
+        if (homes_in_all(axis)) {
+            return true;
+        }
     }
-    // Cannot home if cycle == 0 and !allow_single_axis
-    return homing_cycles[i].get() != 0 || homing_allows[i].get();
+    return false;
 }
 
 bool have_homing_info() {
-    for (int i = 0; i < HOMING_N_AXIS; ++i) {
+    for (int i = 0; i < homing_axis_count(); ++i) {
         if (!homing_cycles[i].known() || !homing_allows[i].known()) {
             return false;
         }
@@ -65,12 +86,20 @@ private:
 public:
     HomingScene() : Scene("Home", 4) {}
 
-    bool is_homing(int axis) { return can_home(axis) && (_axis_to_home == -1 || _axis_to_home == axis); }
+    bool is_homing(int axis) {
+        return _axis_to_home == -1 ? homes_in_all(axis) : (_axis_to_home == axis && can_home_individually(axis));
+    }
     void onEntry(void* arg) override {
+        const char* s = static_cast<const char*>(arg);
+        if (s && strcmp(s, "Confirmed") == 0) {
+            dbg_printf("HomingScene: sending Ctrl-X soft reset\r\n");
+            fnc_realtime(Reset);
+            schedule_action([]() { send_line("$X"); });
+            return;
+        }
         if (state == Idle && _auto) {
             pop_scene();
         }
-        const char* s = static_cast<const char*>(arg);
         _auto         = s && strcmp(s, "auto") == 0;
         if (!have_homing_info()) {
             schedule_action(detect_homing_info);
@@ -88,8 +117,10 @@ public:
     void onGreenButtonPress() override {
         if (state == Idle || state == Alarm) {
             if (_axis_to_home != -1) {
-                send_linef("$H%c", axisNumToChar(_axis_to_home));
-            } else {
+                if (can_home_individually(_axis_to_home)) {
+                    send_linef("$H%c", axisNumToChar(_axis_to_home));
+                }
+            } else if (has_home_all_axes()) {
                 send_line("$H");
             }
         } else if (state == Cycle) {
@@ -99,19 +130,35 @@ public:
         }
     }
     void onRedButtonPress() override {
-        if (state == Homing || state == Alarm) {
+        if (state == Homing) {
             fnc_realtime(Reset);
+        } else if (state == Alarm) {
+            if (alarm_is_critical()) {
+                push_scene(&confirmScene, (void*)"Soft Reset?\nOffsets will be lost");
+            } else {
+                send_line("$X");
+            }
         }
     }
 
     void increment_axis_to_home() {
         do {
             ++_axis_to_home;
-            if (_axis_to_home >= HOMING_N_AXIS) {
+            if (_axis_to_home >= homing_axis_count()) {
                 _axis_to_home = -1;
                 return;
             }
-        } while (!can_home(_axis_to_home));
+        } while (!can_home_individually(_axis_to_home));
+    }
+    void decrement_axis_to_home() {
+        do {
+            if (_axis_to_home == -1) {
+                _axis_to_home = homing_axis_count() - 1;
+            } else if (--_axis_to_home < 0) {
+                _axis_to_home = -1;
+                return;
+            }
+        } while (!can_home_individually(_axis_to_home));
     }
     void onTouchClick() {
         if (state == Idle || state == Homing || state == Alarm) {
@@ -122,7 +169,11 @@ public:
     }
 
     void onEncoder(int delta) override {
-        increment_axis_to_home();
+        if (delta < 0) {
+            decrement_axis_to_home();
+        } else {
+            increment_axis_to_home();
+        }
         reDisplay();
     }
     void onDROChange() { reDisplay(); }  // also covers any status change
@@ -137,15 +188,26 @@ public:
         const char* orangeLabel = "";
         std::string green       = "Home ";
 
+        int active_axes = homing_axis_count();
+        int dro_height  = (active_axes <= 3) ? 32 : (active_axes == 4 ? 25 : 18);
+        int dro_gap     = (active_axes <= 3) ? 33 : (active_axes == 6 ? 20 : dro_height + 5);
+        int start_y     = 68;
+        if (active_axes > 3) {
+            static constexpr int list_top    = 64;
+            static constexpr int list_bottom = 200;
+            int list_height = dro_height + (active_axes - 1) * dro_gap;
+            start_y         = list_top + (list_bottom - list_top - list_height) / 2;
+        }
+        fontnum_t font  = (active_axes <= 4) ? MEDIUM : SMALL;
+        DRO dro(16, start_y, 210, dro_height, font, dro_gap);
+
         if (false && state == Homing) {
-            DRO dro(16, 68, 210, 32, MEDIUM);
-            for (size_t axis = 0; axis < HOMING_N_AXIS; axis++) {
+            for (int axis = 0; axis < active_axes; axis++) {
                 dro.draw(axis, -1, true);
             }
 
         } else if (state == Idle || state == Homing || state == Alarm) {
-            DRO dro(16, 68, 210, 32, MEDIUM);
-            for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
+            for (int axis = 0; axis < active_axes; ++axis) {
                 dro.drawHoming(axis, is_homing(axis), is_homed(axis));
             }
 
@@ -171,21 +233,15 @@ public:
                 redLabel = "E-Stop";
             } else {
                 if (state == Alarm && (strchr(myCtrlPins, 'D') == NULL)) {  // You can reset alarms if door is not active
-                    redLabel = "Reset";
+                    redLabel = alarm_is_critical() ? "Reset" : "Unlock";
                 }
                 if (!have_homing_info()) {
                     orangeLabel = "Loading";
                 } else if (_axis_to_home == -1) {
-                    for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
-                        if (can_home(axis)) {
-                            if (!grnLabel.length()) {
-                                grnLabel = "Home";
-                            }
-
-                            grnLabel += axisNumToChar(axis);
-                        }
+                    if (has_home_all_axes()) {
+                        grnLabel = "Home All";
                     }
-                } else {
+                } else if (can_home_individually(_axis_to_home)) {
                     grnLabel = "Home";
                     grnLabel += axisNumToChar(_axis_to_home);
                 }

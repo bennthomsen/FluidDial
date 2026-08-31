@@ -54,6 +54,7 @@ public:
     virtual void onStateChange(state_t) {}
     virtual void onDROChange() {}
     virtual void onLimitsChange() {}
+    virtual void onProbe(const pos_t* axes, bool success, size_t n_axis) {}
     virtual void onMessage(char* command, char* arguments) {}
     virtual void onEncoder(int delta) {}
     virtual void onPoll() {}
