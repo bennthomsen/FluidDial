@@ -152,16 +152,22 @@ public:
         drawStatus();
 
         int active_axes = (n_axes > 0 && n_axes <= 6) ? n_axes : 3;
-        int dro_height  = (active_axes <= 3) ? 32 : (active_axes == 4 ? 25 : 18);
-        int dro_gap     = (active_axes <= 3) ? 33 : (active_axes == 6 ? 20 : dro_height + 5);
-        int start_y     = (active_axes <= 3) ? 68 : (active_axes == 4 ? 58 : 50);
+        int dro_height  = (active_axes <= 3) ? 32 : (active_axes == 4 ? 22 : (active_axes == 5 ? 16 : 14));
+        int dro_gap     = (active_axes <= 3) ? 33 : (active_axes == 4 ? 25 : 20);
+        int start_y     = 68;
+        if (active_axes > 3) {
+            static constexpr int list_top    = 64;
+            static constexpr int list_bottom = 178;
+            int list_height = dro_height + (active_axes - 1) * dro_gap;
+            start_y         = list_top + (list_bottom - list_top - list_height) / 2;
+        }
         fontnum_t font  = (active_axes <= 4) ? MEDIUM : SMALL;
         DRO dro(16, start_y, 210, dro_height, font, dro_gap);
         for (int i = 0; i < active_axes; ++i) {
             dro.draw(i, -1, true);
         }
 
-        int y = 170;
+        int y = 180;
         if (state == Cycle || state == Hold) {
             int width  = 192;
             int height = 10;
@@ -184,9 +190,9 @@ public:
                 case RT_FEED_SPEED:
                     sprintf(legend, "Fd:%d Spd:%d", myFeed, mySpeed);
             }
-            centered_text(legend, y + 23);
+            centered_text(legend, y + 17);
         } else {
-            centered_text(mode_string(), y + 23, GREEN, TINY);
+            centered_text(mode_string(), y + 17, GREEN, TINY);
         }
 
         const char* encoder_button_text = "Menu";

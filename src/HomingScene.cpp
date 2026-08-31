@@ -178,7 +178,13 @@ public:
         int active_axes = homing_axis_count();
         int dro_height  = (active_axes <= 3) ? 32 : (active_axes == 4 ? 25 : 18);
         int dro_gap     = (active_axes <= 3) ? 33 : (active_axes == 6 ? 20 : dro_height + 5);
-        int start_y     = (active_axes <= 3) ? 68 : (active_axes == 4 ? 58 : 50);
+        int start_y     = 68;
+        if (active_axes > 3) {
+            static constexpr int list_top    = 64;
+            static constexpr int list_bottom = 200;
+            int list_height = dro_height + (active_axes - 1) * dro_gap;
+            start_y         = list_top + (list_bottom - list_top - list_height) / 2;
+        }
         fontnum_t font  = (active_axes <= 4) ? MEDIUM : SMALL;
         DRO dro(16, start_y, 210, dro_height, font, dro_gap);
 
