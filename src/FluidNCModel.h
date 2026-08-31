@@ -69,6 +69,8 @@ char        axisNumToChar(int axis);
 state_t     decode_state_string(const char* state_string);
 const char* decode_error_number(int error_num);
 const char* mode_string();
+bool        alarm_is_homing();
+bool        alarm_is_critical();
 
 bool fnc_is_connected();
 void set_disconnected_state();

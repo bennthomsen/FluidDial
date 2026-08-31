@@ -3,6 +3,7 @@
 
 #include "Scene.h"
 #include "ConfigItem.h"
+#include "ConfirmScene.h"
 
 extern Scene statusScene;
 
@@ -89,10 +90,16 @@ public:
         return _axis_to_home == -1 ? homes_in_all(axis) : (_axis_to_home == axis && can_home_individually(axis));
     }
     void onEntry(void* arg) override {
+        const char* s = static_cast<const char*>(arg);
+        if (s && strcmp(s, "Confirmed") == 0) {
+            dbg_printf("HomingScene: sending Ctrl-X soft reset\r\n");
+            fnc_realtime(Reset);
+            schedule_action([]() { send_line("$X"); });
+            return;
+        }
         if (state == Idle && _auto) {
             pop_scene();
         }
-        const char* s = static_cast<const char*>(arg);
         _auto         = s && strcmp(s, "auto") == 0;
         if (!have_homing_info()) {
             schedule_action(detect_homing_info);
@@ -123,8 +130,14 @@ public:
         }
     }
     void onRedButtonPress() override {
-        if (state == Homing || state == Alarm) {
+        if (state == Homing) {
             fnc_realtime(Reset);
+        } else if (state == Alarm) {
+            if (alarm_is_critical()) {
+                push_scene(&confirmScene, (void*)"Soft Reset?\nOffsets will be lost");
+            } else {
+                send_line("$X");
+            }
         }
     }
 
@@ -220,7 +233,7 @@ public:
                 redLabel = "E-Stop";
             } else {
                 if (state == Alarm && (strchr(myCtrlPins, 'D') == NULL)) {  // You can reset alarms if door is not active
-                    redLabel = "Reset";
+                    redLabel = alarm_is_critical() ? "Reset" : "Unlock";
                 }
                 if (!have_homing_info()) {
                     orangeLabel = "Loading";

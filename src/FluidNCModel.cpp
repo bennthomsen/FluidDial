@@ -113,6 +113,25 @@ const char* decode_error_number(int error_num) {
     return retval;
 }
 
+bool alarm_is_homing() {
+    return lastAlarm == 14 || (lastAlarm >= 6 && lastAlarm <= 9);
+}
+
+bool alarm_is_critical() {
+    switch (lastAlarm) {
+        case 4:
+        case 5:  // Probe fail
+        case 6:
+        case 7:
+        case 8:
+        case 9:   // Homing fail
+        case 14:  // Unhomed
+            return false;
+        default:
+            return true;
+    }
+}
+
 extern "C" void begin_status_report() {
     myPercent = 0;
 }
