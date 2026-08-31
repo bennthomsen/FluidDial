@@ -161,6 +161,7 @@ pos_t toMm(pos_t position) {
 }
 
 extern "C" void show_dro(const pos_t* axes, const pos_t* wco, bool isMpos, bool* limits, size_t n_axis) {
+    n_axes = (int)n_axis;
     for (int axis = 0; axis < n_axis; axis++) {
         myAxes[axis] = fromMm(axes[axis]);
         if (isMpos) {
