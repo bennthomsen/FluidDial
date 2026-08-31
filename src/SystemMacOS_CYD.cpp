@@ -194,7 +194,7 @@ extern "C" int fnc_getchar() {
     int  n = (int)read(serial_fd, &c, 1);
     if (n > 0) {
         update_rx_time();
-        return (unsigned char)c;
+        return observe_fnc_rx((unsigned char)c);
     }
     return -1;
 }

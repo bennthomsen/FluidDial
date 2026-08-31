@@ -77,6 +77,10 @@ void set_disconnected_state();
 
 void update_rx_time();
 
+// Observe raw FluidNC receive bytes so probe reports can be delivered despite
+// the pinned GrblParser release expecting the wrong separator in [PRB:] lines.
+int observe_fnc_rx(int ch);
+
 // Bounded boot-time probe over UART: discards bootloader noise then sends
 // XON + status-report queries until FluidNC responds, or `budget_ms`
 // elapses. Returns true on response. Bytes read here are discarded, NOT

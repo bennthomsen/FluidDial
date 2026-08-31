@@ -155,6 +155,76 @@ extern "C" void show_limits(bool probe, const bool* limits, size_t n_axis) {
     memcpy(myLimitSwitches, limits, n_axis * sizeof(*limits));
 }
 
+extern "C" void show_probe(const pos_t* axes, const bool probe_success, size_t n_axis) {
+    if (current_scene) {
+        current_scene->onProbe(axes, probe_success, n_axis);
+    }
+}
+
+// GrblParser 9108f54 looks for '|'
+// between the coordinates and success flag in [PRB:] reports.  FluidNC uses
+// the GRBL-standard ':' separator, so that parser never calls show_probe().
+int observe_fnc_rx(int ch) {
+    static char   line[192];
+    static size_t length = 0;
+
+    if (ch < 0) {
+        return ch;
+    }
+    if (ch == '\r') {
+        return ch;
+    }
+    if (ch != '\n') {
+        if (length < sizeof(line) - 1) {
+            line[length++] = (char)ch;
+        } else {
+            length = 0;
+        }
+        return ch;
+    }
+
+    line[length] = '\0';
+    length       = 0;
+
+    static constexpr char prefix[] = "[PRB:";
+    if (strncmp(line, prefix, sizeof(prefix) - 1) != 0) {
+        return ch;
+    }
+
+    char* end = strrchr(line, ']');
+    if (!end || end[1] != '\0') {
+        return ch;
+    }
+    *end = '\0';
+
+    char* body    = line + sizeof(prefix) - 1;
+    char* success = strrchr(body, ':');
+    if (!success || (success[1] != '0' && success[1] != '1') || success[2] != '\0') {
+        return ch;
+    }
+    *success++ = '\0';
+
+    pos_t  axes[6];
+    size_t n_axis = 0;
+    char*  field  = body;
+    while (*field && n_axis < 6) {
+        char* comma = strchr(field, ',');
+        if (comma) {
+            *comma = '\0';
+        }
+        axes[n_axis++] = atopos(field);
+        if (!comma) {
+            break;
+        }
+        field = comma + 1;
+    }
+
+    if (n_axis && current_scene) {
+        current_scene->onProbe(axes, *success == '1', n_axis);
+    }
+    return ch;
+}
+
 extern "C" void show_control_pins(const char* pins) {
     //dbg_printf("show_control_pins:%s\r\n", pins);
     myCtrlPins = pins;

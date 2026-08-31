@@ -300,7 +300,7 @@ extern "C" int fnc_getchar() {
 #ifdef ECHO_FNC_TO_DEBUG
         dbg_write(c);
 #endif
-        return c;
+        return observe_fnc_rx((unsigned char)c);
     }
     return -1;
 }
