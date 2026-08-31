@@ -6,7 +6,7 @@
 
 extern Scene statusScene;
 
-#define HOMING_N_AXIS 4
+#define HOMING_N_AXIS 6
 
 static int homing_axis_count() {
     if (n_axes <= 0) {
@@ -20,12 +20,16 @@ IntConfigItem homing_cycles[HOMING_N_AXIS] = {
     { "$/axes/y/homing/cycle" },
     { "$/axes/z/homing/cycle" },
     { "$/axes/a/homing/cycle" },
+    { "$/axes/b/homing/cycle" },
+    { "$/axes/c/homing/cycle" },
 };
 BoolConfigItem homing_allows[HOMING_N_AXIS] = {
     { "$/axes/x/homing/allow_single_axis" },
     { "$/axes/y/homing/allow_single_axis" },
     { "$/axes/z/homing/allow_single_axis" },
     { "$/axes/a/homing/allow_single_axis" },
+    { "$/axes/b/homing/allow_single_axis" },
+    { "$/axes/c/homing/allow_single_axis" },
 };
 
 int  homed_axes = 0;
@@ -144,15 +148,20 @@ public:
         const char* orangeLabel = "";
         std::string green       = "Home ";
 
+        int active_axes = homing_axis_count();
+        int dro_height  = (active_axes <= 3) ? 32 : (active_axes == 4 ? 25 : 18);
+        int dro_gap     = (active_axes <= 3) ? 33 : (active_axes == 6 ? 20 : dro_height + 5);
+        int start_y     = (active_axes <= 3) ? 68 : (active_axes == 4 ? 58 : 50);
+        fontnum_t font  = (active_axes <= 4) ? MEDIUM : SMALL;
+        DRO dro(16, start_y, 210, dro_height, font, dro_gap);
+
         if (false && state == Homing) {
-            DRO dro(16, 68, 210, 32, MEDIUM);
-            for (int axis = 0; axis < homing_axis_count(); axis++) {
+            for (int axis = 0; axis < active_axes; axis++) {
                 dro.draw(axis, -1, true);
             }
 
         } else if (state == Idle || state == Homing || state == Alarm) {
-            DRO dro(16, 68, 210, 32, MEDIUM);
-            for (int axis = 0; axis < homing_axis_count(); ++axis) {
+            for (int axis = 0; axis < active_axes; ++axis) {
                 dro.drawHoming(axis, is_homing(axis), is_homed(axis));
             }
 
@@ -183,7 +192,7 @@ public:
                 if (!have_homing_info()) {
                     orangeLabel = "Loading";
                 } else if (_axis_to_home == -1) {
-                    for (int axis = 0; axis < homing_axis_count(); ++axis) {
+                    for (int axis = 0; axis < active_axes; ++axis) {
                         if (can_home(axis)) {
                             if (!grnLabel.length()) {
                                 grnLabel = "Home";
