@@ -7,8 +7,13 @@ std::vector<ConfigItem*> configRequests;
 static constexpr uint32_t CONFIG_REQUEST_RETRY_MS = 500;
 static uint32_t           configRequestSentMs     = 0;
 
+static bool can_send_config_request() {
+    // ensure config requests are sent only when a job is not running - as it won't be processed otherwise
+    return state == Idle || state == Alarm;
+}
+
 static void send_next_config_request() {
-    if (configRequests.empty()) {
+    if (configRequests.empty() || !can_send_config_request()) {
         return;
     }
     configRequests.front()->send_request();
