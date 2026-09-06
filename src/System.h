@@ -41,11 +41,16 @@ static inline uint32_t millis() { return lgfx::millis(); }
 
 #ifdef USE_M5
 #    include "M5Unified.h"
-#    ifndef ARDUINO
+#    ifdef ARDUINO
+bool joystick2_read(int16_t& x, int16_t& y);
+#    else
 // Provide Arduino-compatible millis() free function for native (SDL) builds
 static inline uint32_t millis() { return m5gfx::millis(); }
+static inline bool joystick2_read(int16_t&, int16_t&) { return false; }
 #    endif
-#endif  // USE_M5
+#else
+static inline bool joystick2_read(int16_t&, int16_t&) { return false; }
+#endif
 
 int  battery_level();    // Returns 0-100, or -1 if no battery
 bool battery_charging(); // Returns true while charging via USB

@@ -21,6 +21,88 @@ m5::Button_Class& dialButton = M5Dial.BtnA;
 m5::Button_Class  greenButton;
 m5::Button_Class  redButton;
 
+namespace {
+constexpr uint8_t  JOYSTICK2_ADDRESS       = 0x63;
+constexpr uint8_t  JOYSTICK2_AXIS_REGISTER = 0x00;
+constexpr uint32_t JOYSTICK2_I2C_FREQ      = 400000;
+constexpr int      JOYSTICK2_CENTER        = 32768;
+constexpr int      JOYSTICK2_DEADZONE_X    = 2500;
+constexpr int      JOYSTICK2_DEADZONE_Y    = 4000;
+constexpr int      JOYSTICK2_ARM_WINDOW    = 2500;
+constexpr uint8_t  JOYSTICK2_ARM_SAMPLES   = 10;
+
+bool     joystick2_armed       = false;
+uint8_t  joystick2_arm_samples = 0;
+uint16_t joystick2_center_x     = JOYSTICK2_CENTER;
+uint16_t joystick2_center_y     = JOYSTICK2_CENTER;
+
+int normalize_joystick_axis(uint16_t raw, uint16_t center, int deadzone, bool invert) {
+    int raw_delta = static_cast<int>(raw) - static_cast<int>(center);
+    int value = raw_delta;
+    if (invert) {
+        value = -value;
+    }
+    if (abs(value) <= deadzone) {
+        return 0;
+    }
+    int magnitude = abs(value) - deadzone;
+    int available = raw_delta < 0 ? center : (65535 - center);
+    magnitude = (magnitude * 1000) / (available - deadzone);
+    if (magnitude > 1000) {
+        magnitude = 1000;
+    }
+    return value < 0 ? -magnitude : magnitude;
+}
+}  // namespace
+
+bool joystick2_read(int16_t& x, int16_t& y) {
+#ifdef USE_WIFI
+    if (wifi_use_uart_mode()) {
+        x = 0;
+        y = 0;
+        return false;
+    }
+
+    uint8_t data[4];
+    if (!M5Dial.Ex_I2C.readRegister(JOYSTICK2_ADDRESS, JOYSTICK2_AXIS_REGISTER,
+                                    data, sizeof(data), JOYSTICK2_I2C_FREQ)) {
+        x = 0;
+        y = 0;
+        return false;
+    }
+
+    uint16_t raw_x = static_cast<uint16_t>(data[0]) |
+                     (static_cast<uint16_t>(data[1]) << 8);
+    uint16_t raw_y = static_cast<uint16_t>(data[2]) |
+                     (static_cast<uint16_t>(data[3]) << 8);
+
+    if (!joystick2_armed) {
+        bool near_center = abs(static_cast<int>(raw_x) - JOYSTICK2_CENTER) <= JOYSTICK2_ARM_WINDOW &&
+                           abs(static_cast<int>(raw_y) - JOYSTICK2_CENTER) <= JOYSTICK2_ARM_WINDOW;
+        if (!near_center) {
+            joystick2_arm_samples = 0;
+        } else if (++joystick2_arm_samples >= JOYSTICK2_ARM_SAMPLES) {
+            joystick2_center_x = raw_x;
+            joystick2_center_y = raw_y;
+            joystick2_armed = true;
+        }
+        x = 0;
+        y = 0;
+        return false;
+    }
+
+    x = static_cast<int16_t>(normalize_joystick_axis(raw_x, joystick2_center_x,
+                                                     JOYSTICK2_DEADZONE_X, false));
+    y = static_cast<int16_t>(normalize_joystick_axis(raw_y, joystick2_center_y,
+                                                     JOYSTICK2_DEADZONE_Y, true));
+    return true;
+#else
+    x = 0;
+    y = 0;
+    return false;
+#endif
+}
+
 bool round_display = true;
 
 void init_hardware() {
@@ -45,6 +127,8 @@ void init_hardware() {
 #ifdef USE_WIFI
     if (wifi_use_uart_mode()) {
         init_fnc_uart(FNC_UART_NUM, PND_TX_FNC_RX_PIN, PND_RX_FNC_TX_PIN);
+    } else {
+        M5Dial.Ex_I2C.begin();
     }
 #else
     init_fnc_uart(FNC_UART_NUM, PND_TX_FNC_RX_PIN, PND_RX_FNC_TX_PIN);
