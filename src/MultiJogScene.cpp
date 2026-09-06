@@ -141,10 +141,16 @@ private:
     uint32_t _jog_drain_ms     = 0;   // estimated millis() when the buffer empties
     bool     _mpg_jogging      = false;
     bool     _joystick_jogging = false;
+    bool     _joystick_fast    = false;
     int8_t   _joystick_dir_x   = 0;
     int8_t   _joystick_dir_y   = 0;
-    e4_t     _joystick_feed    = 0;
-    uint32_t _last_joystick_ms  = 0;
+    int8_t   _joystick_candidate_dir_x = 0;
+    int8_t   _joystick_candidate_dir_y = 0;
+    uint8_t  _joystick_direction_samples = 0;
+    uint8_t  _joystick_center_samples = 0;
+    uint8_t  _joystick_read_failures = 0;
+    uint8_t  _joystick_speed_samples = 0;
+    uint32_t _last_joystick_trace_ms = 0;
     uint8_t  _joystick_engage_samples = 0;
     int      _joystick_engage_magnitude = 0;
     int8_t   _joystick_engage_dir_x = 0;
@@ -175,10 +181,16 @@ private:
         _continuous       = false;
         _mpg_jogging      = false;
         _joystick_jogging = false;
+        _joystick_fast    = false;
         _joystick_dir_x   = 0;
         _joystick_dir_y   = 0;
-        _joystick_feed    = 0;
-        _last_joystick_ms  = 0;
+        _joystick_candidate_dir_x = 0;
+        _joystick_candidate_dir_y = 0;
+        _joystick_direction_samples = 0;
+        _joystick_center_samples = 0;
+        _joystick_read_failures = 0;
+        _joystick_speed_samples = 0;
+        _last_joystick_trace_ms = 0;
         _joystick_engage_samples = 0;
         _joystick_engage_magnitude = 0;
         _joystick_engage_dir_x = 0;
@@ -755,16 +767,61 @@ public:
         return false;
     }
 
+    void start_joystick_jog(int8_t dir_x, int8_t dir_y, bool fast) {
+        // Match the button-jog rates for 1 mm and 10 mm steps.  Send one
+        // long jog instead of a stream of short segments so network latency
+        // cannot leave gaps between segments; centering the stick cancels it.
+        e4_t feed = e4_from_int(inInches ? (fast ? 120 : 12) : (fast ? 3000 : 300));
+        e4_t travel = e4_from_int(inInches ? 200 : 5000);
+
+        std::string cmd("$J=G91");
+        cmd += inInches ? "G20" : "G21";
+        cmd += "F";
+        cmd += e4_to_cstr(feed, 3);
+        if (dir_x != 0) {
+            cmd += "X";
+            cmd += e4_to_cstr(dir_x < 0 ? -travel : travel, 0);
+        }
+        if (dir_y != 0) {
+            cmd += "Y";
+            cmd += e4_to_cstr(dir_y < 0 ? -travel : travel, 0);
+        }
+        send_jog_line(cmd.c_str());
+        dbg_printf("JOY2 %s jog dir=%d,%d feed=%s cmd=%s\n",
+                   fast ? "fast" : "slow", dir_x, dir_y,
+                   e4_to_cstr(feed, 3), cmd.c_str());
+        _joystick_jogging = true;
+        _joystick_fast    = fast;
+        _joystick_dir_x   = dir_x;
+        _joystick_dir_y   = dir_y;
+    }
+
     void service_joystick() {
         int16_t joystick_x;
         int16_t joystick_y;
-        if (!joystick2_read(joystick_x, joystick_y)) {
-            if (_joystick_jogging) {
+        uint16_t raw_x = 0;
+        uint16_t raw_y = 0;
+        if (!joystick2_read(joystick_x, joystick_y, &raw_x, &raw_y)) {
+            // A single missed I2C transaction must not interrupt motion.
+            // Stop only when several consecutive reads have failed.
+            constexpr uint8_t JOYSTICK_READ_FAILURE_SAMPLES = 4;
+            if (_joystick_read_failures < JOYSTICK_READ_FAILURE_SAMPLES) {
+                ++_joystick_read_failures;
+            }
+            if (_joystick_jogging &&
+                _joystick_read_failures >= JOYSTICK_READ_FAILURE_SAMPLES) {
+#ifdef JOYSTICK_TRACE
+                dbg_printf("JOY2 event t=%u cancel=read-failure count=%u\n",
+                           (unsigned)millis(), _joystick_read_failures);
+#endif
                 cancel_jog();
             }
             return;
         }
+        _joystick_read_failures = 0;
 
+        int16_t normalized_x = joystick_x;
+        int16_t normalized_y = joystick_y;
         constexpr int JOYSTICK_FILTER_SHIFT = 2;
         _joystick_filtered_x += (static_cast<int>(joystick_x) - _joystick_filtered_x) >> JOYSTICK_FILTER_SHIFT;
         _joystick_filtered_y += (static_cast<int>(joystick_y) - _joystick_filtered_y) >> JOYSTICK_FILTER_SHIFT;
@@ -783,37 +840,95 @@ public:
         if (!_joystick_jogging && (_continuous || _mpg_jogging)) {
             return;
         }
-        if (joystick_x == 0 && joystick_y == 0) {
-            if (_joystick_jogging) {
-                cancel_jog();
-            }
-            return;
-        }
 
-        int8_t joystick_dir_x = joystick_x > 0 ? 1 : (joystick_x < 0 ? -1 : 0);
-        int8_t joystick_dir_y = joystick_y > 0 ? 1 : (joystick_y < 0 ? -1 : 0);
-        if (_joystick_jogging &&
-            (joystick_dir_x != _joystick_dir_x || joystick_dir_y != _joystick_dir_y)) {
-            cancel_jog();
-            return;
-        }
-
-        constexpr int JOYSTICK_MAX_FEED_MM = 5000;
-        constexpr int JOYSTICK_MAX_FEED_IN = 200;
-        e4_t max_feed = e4_from_int(inInches ? JOYSTICK_MAX_FEED_IN : JOYSTICK_MAX_FEED_MM);
-        e4_t min_feed = e4_from_int(inInches ? 20 : 500);
         int magnitude = std::max(abs(static_cast<int>(joystick_x)),
                                  abs(static_cast<int>(joystick_y)));
 
-        constexpr int JOYSTICK_ENGAGE_THRESHOLD = 650;
-        constexpr uint8_t JOYSTICK_ENGAGE_SAMPLES = 8;
+    #ifdef JOYSTICK_TRACE
+        uint32_t trace_now = millis();
+        if ((trace_now - _last_joystick_trace_ms) >= 100) {
+            dbg_printf("JOY2 sample t=%u adc=%u,%u norm=%d,%d filt=%d,%d mag=%d active=%d fast=%d state=%d cancel=%d\n",
+                   (unsigned)trace_now, raw_x, raw_y,
+                       static_cast<int>(normalized_x), static_cast<int>(normalized_y),
+                   _joystick_filtered_x, _joystick_filtered_y, magnitude,
+                   _joystick_jogging, _joystick_fast, static_cast<int>(state),
+                   _cancel_pending);
+            _last_joystick_trace_ms = trace_now;
+        }
+    #endif
+
+        // Enter slow mode with a modest deflection.  Separate fast-mode enter
+        // and exit thresholds prevent chatter near the speed boundary.
+        constexpr int JOYSTICK_ENGAGE_THRESHOLD = 250;
+        constexpr int JOYSTICK_FAST_ENTER       = 850;
+        constexpr int JOYSTICK_FAST_EXIT        = 650;
+        constexpr int JOYSTICK_SETTLE_DELTA = 80;
+        constexpr uint8_t JOYSTICK_ENGAGE_SAMPLES = 5;
         if (magnitude < JOYSTICK_ENGAGE_THRESHOLD) {
             _joystick_engage_samples = 0;
             if (_joystick_jogging) {
+                // Debounce the centered position.  Joystick noise and an
+                // occasional zero sample otherwise cause repeated braking.
+                constexpr uint8_t JOYSTICK_CENTER_SAMPLES = 3;
+                if (++_joystick_center_samples >= JOYSTICK_CENTER_SAMPLES) {
+#ifdef JOYSTICK_TRACE
+                    dbg_printf("JOY2 event t=%u cancel=center mag=%d\n",
+                               (unsigned)millis(), magnitude);
+#endif
+                    cancel_jog();
+                }
+            }
+            return;
+        }
+        _joystick_center_samples = 0;
+
+        // Suppress a small off-axis component so noise near a cardinal
+        // direction does not continually change an X jog into an XY jog.
+        // A diagonal is selected only when the weaker axis is at least 60%
+        // of the stronger one.
+        int abs_x = abs(static_cast<int>(joystick_x));
+        int abs_y = abs(static_cast<int>(joystick_y));
+        bool use_x = abs_x * 5 >= abs_y * 3;
+        bool use_y = abs_y * 5 >= abs_x * 3;
+        int8_t joystick_dir_x = use_x ? (joystick_x > 0 ? 1 : -1) : 0;
+        int8_t joystick_dir_y = use_y ? (joystick_y > 0 ? 1 : -1) : 0;
+
+        if (_joystick_jogging &&
+            (joystick_dir_x != _joystick_dir_x || joystick_dir_y != _joystick_dir_y)) {
+            // Require a new direction to remain stable before cancelling the
+            // active long jog.  The next polls then engage the new direction.
+            // The axis deadband above already suppresses off-axis noise.  Use
+            // only a short confirmation here so rotating X -> diagonal -> Y
+            // promptly replaces the old long jog instead of continuing along
+            // its original axis while the new direction is ignored.
+            constexpr uint8_t JOYSTICK_DIRECTION_SAMPLES = 2;
+            if (joystick_dir_x != _joystick_candidate_dir_x ||
+                joystick_dir_y != _joystick_candidate_dir_y) {
+                return;
+            }
+
+            // Wait until the stick has reached its intended deflection before
+            // choosing slow or fast.  Without this, a quick full-stick move can
+            // start a slow jog while the input filter is still rising, then
+            // cancel and restart as fast, which feels like a stutter.
+            int magnitude_delta = abs(magnitude - _joystick_engage_magnitude);
+            _joystick_engage_magnitude = magnitude;
+            if (magnitude_delta > JOYSTICK_SETTLE_DELTA) {
+                _joystick_engage_samples = 0;
+                return;
+                _joystick_direction_samples = 1;
+            } else if (++_joystick_direction_samples >= JOYSTICK_DIRECTION_SAMPLES) {
+#ifdef JOYSTICK_TRACE
+                dbg_printf("JOY2 event t=%u cancel=direction old=%d,%d new=%d,%d\n",
+                           (unsigned)millis(), _joystick_dir_x, _joystick_dir_y,
+                           joystick_dir_x, joystick_dir_y);
+#endif
                 cancel_jog();
             }
             return;
         }
+        _joystick_direction_samples = 0;
+
         if (!_joystick_jogging) {
             if (joystick_dir_x != _joystick_engage_dir_x ||
                 joystick_dir_y != _joystick_engage_dir_y) {
@@ -830,41 +945,32 @@ public:
             }
         }
 
-        e4_t feed = min_feed + static_cast<e4_t>((static_cast<int64_t>(max_feed - min_feed) * magnitude) / 1000);
-
-        uint32_t now = millis();
-        static constexpr uint32_t JOYSTICK_INTERVAL_MS = 60;
-        if (_joystick_jogging && (now - _last_joystick_ms) < JOYSTICK_INTERVAL_MS) {
+        bool fast = _joystick_jogging
+                        ? (_joystick_fast ? magnitude >= JOYSTICK_FAST_EXIT
+                                          : magnitude >= JOYSTICK_FAST_ENTER)
+                        : magnitude >= JOYSTICK_FAST_ENTER;
+        if (_joystick_jogging && fast != _joystick_fast) {
+            // FluidNC cannot change the feed of an executing jog.  Cancel and
+            // let the normal engagement path restart at the new speed.  The
+            // trace showed occasional valid-looking I2C samples that pulled
+            // the filtered magnitude below the threshold for one instant.
+            // Require a sustained crossing so those glitches cannot repeatedly
+            // brake and restart a fast jog.
+            constexpr uint8_t JOYSTICK_SPEED_CHANGE_SAMPLES = 8;
+            if (++_joystick_speed_samples < JOYSTICK_SPEED_CHANGE_SAMPLES) {
+                return;
+            }
+#ifdef JOYSTICK_TRACE
+            dbg_printf("JOY2 event t=%u cancel=speed old=%d new=%d mag=%d\n",
+                       (unsigned)millis(), _joystick_fast, fast, magnitude);
+#endif
+            cancel_jog();
             return;
         }
-        if (jog_send_blocked(now)) {
-            return;
+        _joystick_speed_samples = 0;
+        if (!_joystick_jogging) {
+            start_joystick_jog(joystick_dir_x, joystick_dir_y, fast);
         }
-
-        std::string cmd("$J=G91");
-        cmd += inInches ? "G20" : "G21";
-        cmd += "F";
-        cmd += e4_to_cstr(feed, 3);
-        e4_t distance = static_cast<e4_t>((static_cast<int64_t>(feed) * JOYSTICK_INTERVAL_MS) / 60000);
-        if (distance < 1) {
-            distance = 1;
-        }
-        if (joystick_x != 0) {
-            cmd += "X";
-            cmd += e4_to_cstr(joystick_x < 0 ? -distance : distance, 4);
-        }
-        if (joystick_y != 0) {
-            cmd += "Y";
-            cmd += e4_to_cstr(joystick_y < 0 ? -distance : distance, 4);
-        }
-        send_jog_line(cmd.c_str());
-        dbg_printf("JOY2 jog norm=%d,%d feed=%s cmd=%s\n",
-               joystick_x, joystick_y, e4_to_cstr(feed, 3), cmd.c_str());
-        _joystick_jogging = true;
-        _joystick_dir_x = joystick_dir_x;
-        _joystick_dir_y = joystick_dir_y;
-        _joystick_feed = feed;
-        _last_joystick_ms = now;
     }
 
     void onEncoder(int delta) {

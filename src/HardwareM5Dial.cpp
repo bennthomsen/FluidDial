@@ -55,7 +55,8 @@ int normalize_joystick_axis(uint16_t raw, uint16_t center, int deadzone, bool in
 }
 }  // namespace
 
-bool joystick2_read(int16_t& x, int16_t& y) {
+bool joystick2_read(int16_t& x, int16_t& y,
+                    uint16_t* raw_x_out, uint16_t* raw_y_out) {
 #ifdef USE_WIFI
     if (wifi_use_uart_mode()) {
         x = 0;
@@ -75,6 +76,12 @@ bool joystick2_read(int16_t& x, int16_t& y) {
                      (static_cast<uint16_t>(data[1]) << 8);
     uint16_t raw_y = static_cast<uint16_t>(data[2]) |
                      (static_cast<uint16_t>(data[3]) << 8);
+    if (raw_x_out) {
+        *raw_x_out = raw_x;
+    }
+    if (raw_y_out) {
+        *raw_y_out = raw_y;
+    }
 
     if (!joystick2_armed) {
         bool near_center = abs(static_cast<int>(raw_x) - JOYSTICK2_CENTER) <= JOYSTICK2_ARM_WINDOW &&
