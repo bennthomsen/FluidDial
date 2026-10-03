@@ -16,6 +16,8 @@
 
 extern Scene homingScene;
 extern Scene statusScene;
+extern Scene menuScene;
+bool home_scene_ready();
 
 Scene* current_scene = nullptr;
 
@@ -207,7 +209,15 @@ void dispatch_events() {
             dispatch_button(pressed, button);
         }
 
-        dispatch_touch();
+        bool returned_home = false;
+        if (joystick2_button_was_pressed() && current_scene != &menuScene && home_scene_ready()) {
+            activate_at_top_level(&menuScene);
+            returned_home = true;
+        }
+
+        if (!returned_home) {
+            dispatch_touch();
+        }
     }
 
     current_scene->onPoll();
@@ -218,7 +228,6 @@ void dispatch_events() {
 #ifdef USE_WIFI
             wifi_force_ws_reconnect();
 #endif
-            extern Scene menuScene;
             activate_at_top_level(&menuScene);
             fnc_realtime(StatusReport);
         }

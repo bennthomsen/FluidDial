@@ -117,6 +117,12 @@ public:
         }
         PieMenu::onTouchClick();
     }
+    void onRedButtonPress() override {
+        send_line("M63 P1");
+    }
+    void onGreenButtonPress() override {
+        send_line("M62 P1");
+    }
     void onStateChange(state_t old_state) override {
         if (state != Disconnected) {
             enableIcons();
@@ -139,6 +145,12 @@ public:
     }
 } menuScene;
 
+static bool menu_initialized = false;
+
+bool home_scene_ready() {
+    return menu_initialized;
+}
+
 Scene* initMenus() {
     menuScene.addItem(&statusButton);
     menuScene.addItem(&homingButton);
@@ -148,6 +160,7 @@ Scene* initMenus() {
     menuScene.addItem(&filesButton);
     menuScene.addItem(&controlButton);
     menuScene.addItem(&setupButton);
+    menu_initialized = true;
 
     return &menuScene;
 }

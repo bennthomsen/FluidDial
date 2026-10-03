@@ -44,15 +44,18 @@ static inline uint32_t millis() { return lgfx::millis(); }
 #    ifdef ARDUINO
 bool joystick2_read(int16_t& x, int16_t& y,
                     uint16_t* raw_x = nullptr, uint16_t* raw_y = nullptr);
+bool joystick2_button_was_pressed();
 #    else
 // Provide Arduino-compatible millis() free function for native (SDL) builds
 static inline uint32_t millis() { return m5gfx::millis(); }
 static inline bool joystick2_read(int16_t&, int16_t&,
                                   uint16_t* = nullptr, uint16_t* = nullptr) { return false; }
+static inline bool joystick2_button_was_pressed() { return false; }
 #    endif
 #else
 static inline bool joystick2_read(int16_t&, int16_t&,
                                   uint16_t* = nullptr, uint16_t* = nullptr) { return false; }
+static inline bool joystick2_button_was_pressed() { return false; }
 #endif
 
 int  battery_level();    // Returns 0-100, or -1 if no battery

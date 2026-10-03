@@ -20,10 +20,12 @@ Stream&            debugPort = USBSerial;
 m5::Button_Class& dialButton = M5Dial.BtnA;
 m5::Button_Class  greenButton;
 m5::Button_Class  redButton;
+m5::Button_Class  joystickButton;
 
 namespace {
 constexpr uint8_t  JOYSTICK2_ADDRESS       = 0x63;
 constexpr uint8_t  JOYSTICK2_AXIS_REGISTER = 0x00;
+constexpr uint8_t  JOYSTICK2_BUTTON_REGISTER = 0x20;
 constexpr uint32_t JOYSTICK2_I2C_FREQ      = 400000;
 constexpr int      JOYSTICK2_CENTER        = 32768;
 constexpr int      JOYSTICK2_DEADZONE_X    = 2500;
@@ -110,6 +112,10 @@ bool joystick2_read(int16_t& x, int16_t& y,
 #endif
 }
 
+bool joystick2_button_was_pressed() {
+    return joystickButton.wasPressed();
+}
+
 bool round_display = true;
 
 void init_hardware() {
@@ -147,6 +153,7 @@ void init_hardware() {
 
     greenButton.setDebounceThresh(5);
     redButton.setDebounceThresh(5);
+    joystickButton.setDebounceThresh(5);
 
     init_encoder(ENC_A, ENC_B);
 
@@ -230,6 +237,16 @@ void update_events() {
     // The red and green buttons are active low
     redButton.setRawState(ms, !m5gfx::gpio_in(RED_BUTTON_PIN));
     greenButton.setRawState(ms, !m5gfx::gpio_in(GREEN_BUTTON_PIN));
+
+#ifdef USE_WIFI
+    if (!wifi_use_uart_mode()) {
+        uint8_t button;
+        if (M5Dial.Ex_I2C.readRegister(JOYSTICK2_ADDRESS, JOYSTICK2_BUTTON_REGISTER,
+                                       &button, sizeof(button), JOYSTICK2_I2C_FREQ)) {
+            joystickButton.setRawState(ms, button == 0);
+        }
+    }
+#endif
 }
 
 void ackBeep() {
